@@ -1,0 +1,11 @@
+implock 1
+
+@@ method Implock.Sample.Text.Reverse(string)
+@@ spec 43c85811b7e39a23916e23b54c2e8f1993e8962725f1e2eb36925b84e7ccaa2f
+| var chars = text.ToCharArray();
+| Array.Reverse(chars);
+| return new string(chars);
+
+@@ method Implock.Sample.Text.WordCount(string)
+@@ spec 5877fef9b4b0e1af1609a93df7de18e05e421ea09a200486a63a1f52411daaa1
+| return text.Split(' ', StringSplitOptions.RemoveEmptyEntries).Length;
