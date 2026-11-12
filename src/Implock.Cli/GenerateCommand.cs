@@ -25,7 +25,7 @@ internal static class GenerateCommand
 
         if (options.Value("--regen") is { } regen)
         {
-            var ids = regen.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToHashSet(StringComparer.Ordinal);
+            var ids = SplitIds(regen).ToHashSet(StringComparer.Ordinal);
             if (ids.Count == 0)
             {
                 throw new UsageException("--regen needs at least one id");
@@ -155,4 +155,29 @@ internal static class GenerateCommand
         string.Join("; ", run.Diagnostics
             .Where(d => d.Id.StartsWith("IMPL", StringComparison.Ordinal) && (d.Location.SourceTree?.FilePath == spec.FilePath || d.Id == "IMPL004"))
             .Select(d => d.Id + ": " + d.GetMessage(CultureInfo.InvariantCulture)));
+
+    /// <summary>Splits a --regen list on the commas between ids; commas inside type arguments or parameter lists stay in the id.</summary>
+    internal static IEnumerable<string> SplitIds(string list)
+    {
+        var depth = 0;
+        var start = 0;
+        for (var i = 0; i < list.Length; i++)
+        {
+            switch (list[i])
+            {
+                case '<' or '(' or '[':
+                    depth++;
+                    break;
+                case '>' or ')' or ']':
+                    depth--;
+                    break;
+                case ',' when depth == 0:
+                    if (list[start..i].Trim() is { Length: > 0 } id) yield return id;
+                    start = i + 1;
+                    break;
+            }
+        }
+
+        if (list[start..].Trim() is { Length: > 0 } last) yield return last;
+    }
 }
