@@ -7,7 +7,7 @@ internal static class GenerateCommand
 {
     public static int Run(Options options, TextWriter output, TextWriter error)
     {
-        options.Allow("--model", "--prune");
+        options.Allow("--model", "--prune", "--regen");
         var project = LoadedProject.Load(options.Positionals.FirstOrDefault());
         var original = project.ReadLockText() ?? "implock 1\n";
         var lockFile = LockFile.Parse(original, out var parseError);
@@ -17,10 +17,23 @@ internal static class GenerateCommand
             return Program.Failure;
         }
 
-        var specs = SpecScanner.Scan(project.Run(original).Compilation);
+        var compilation = project.Run(original).Compilation;
+        var specs = SpecScanner.Scan(compilation);
         var pending = specs
             .Where(s => !lockFile.Entries.TryGetValue(s.Id, out var e) || !string.Equals(e.SpecHash, s.SpecHash, StringComparison.Ordinal))
             .ToList();
+
+        if (options.Value("--regen") is { } regen)
+        {
+            var ids = regen.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToHashSet(StringComparer.Ordinal);
+            var known = specs.Select(s => s.Id).ToHashSet(StringComparer.Ordinal);
+            if (ids.FirstOrDefault(id => !known.Contains(id)) is { } unknown)
+            {
+                throw new UsageException("--regen names no [Implement] method: " + unknown);
+            }
+
+            pending = specs.Where(s => ids.Contains(s.Id) || pending.Contains(s)).ToList();
+        }
 
         if (options.Has("--prune"))
         {
@@ -51,7 +64,7 @@ internal static class GenerateCommand
                     continue;
                 }
 
-                var reason = Fill(project, lockFile, spec, command, out var modelFailed);
+                var reason = Fill(project, lockFile, spec, command, compilation, out var modelFailed);
                 environmentFailure |= modelFailed;
                 if (reason is null)
                 {
@@ -75,9 +88,9 @@ internal static class GenerateCommand
     }
 
     /// <summary>Asks the model for one body, checks it, and records it in <paramref name="lockFile"/>. Returns why it was refused, or null.</summary>
-    private static string? Fill(LoadedProject project, LockFile lockFile, MethodSpec spec, string command, out bool modelFailed)
+    private static string? Fill(LoadedProject project, LockFile lockFile, MethodSpec spec, string command, Compilation compilation, out bool modelFailed)
     {
-        var (ok, stdout, stderr) = ModelRunner.Run(command, PromptBuilder.Build(spec));
+        var (ok, stdout, stderr) = ModelRunner.Run(command, PromptBuilder.Build(spec, TypeContext.Build(compilation, spec)));
         modelFailed = !ok;
         if (!ok)
         {

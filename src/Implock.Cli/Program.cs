@@ -14,7 +14,7 @@ internal static class Program
 
         usage:
           implock check [PROJECT]
-          implock generate [PROJECT] [--model "COMMAND"] [--prune]
+          implock generate [PROJECT] [--model "COMMAND"] [--prune] [--regen ID[,ID...]]
           implock report --original FILE --generated FILE --method Type.Method
                          [--seed N] [--runs N] [--fail-on-looser]
           implock --help | --version
