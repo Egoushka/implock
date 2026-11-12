@@ -101,10 +101,7 @@ internal sealed class LoadedProject
             arguments.Add("/warnaserror+");
         }
 
-        if (WarningLevel(properties) is { } level)
-        {
-            arguments.Add("/warn:" + level);
-        }
+        arguments.Add("/warn:" + WarningLevel(properties));
 
         AddList(arguments, "/warnaserror+:", properties, "WarningsAsErrors");
         AddList(arguments, "/warnaserror-:", properties, "WarningsNotAsErrors");
@@ -208,14 +205,14 @@ internal sealed class LoadedProject
         return properties;
     }
 
-    private static readonly Regex NetFramework = new(@"^net\d{2,3}$", RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
     private static readonly Regex NetCoreApp = new(@"^net(?:coreapp)?(\d+)\.\d+$", RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
 
     /// <summary>
     /// The warning level the SDK gives csc (Microsoft.NET.Sdk.Analyzers.targets): WarningLevel when set, else 9999 under
-    /// AnalysisLevel preview, else 4 for .NET Framework and the major version for .NETCoreApp. Null leaves the compiler default.
+    /// AnalysisLevel preview, else the major version for .NETCoreApp and 4, the compiler default, for anything else. The SDK
+    /// sets it per target and the build fails when any target fails, so a multi-target project takes the highest.
     /// </summary>
-    private static string? WarningLevel(Dictionary<string, string> properties)
+    private static string WarningLevel(Dictionary<string, string> properties)
     {
         if (properties.GetValueOrDefault("WarningLevel", string.Empty) is { Length: > 0 } level)
         {
@@ -227,13 +224,15 @@ internal sealed class LoadedProject
             return "9999";
         }
 
-        var framework = TargetFramework(properties).Split('-')[0];
-        if (NetFramework.IsMatch(framework))
-        {
-            return "4";
-        }
-
-        return NetCoreApp.Match(framework) is { Success: true } match ? match.Groups[1].Value : null;
+        var framework = properties.GetValueOrDefault("TargetFramework", string.Empty);
+        var frameworks = framework.Length > 0
+            ? [framework]
+            : properties.GetValueOrDefault("TargetFrameworks", string.Empty).Split(';', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+        return frameworks
+            .Select(f => NetCoreApp.Match(f.Split('-')[0]) is { Success: true } match ? int.Parse(match.Groups[1].Value, CultureInfo.InvariantCulture) : 4)
+            .DefaultIfEmpty(4)
+            .Max()
+            .ToString(CultureInfo.InvariantCulture);
     }
 
     /// <summary>TargetFramework, else the first of TargetFrameworks, else empty.</summary>

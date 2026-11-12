@@ -207,6 +207,8 @@ public class ProjectPropertiesTests
     [InlineData("<TargetFramework>net5.0</TargetFramework>")]
     [InlineData("<TargetFramework>netcoreapp3.1</TargetFramework><AnalysisLevel>preview</AnalysisLevel>")]
     [InlineData("<TargetFramework></TargetFramework><TargetFrameworks>net8.0;net48</TargetFrameworks>")]
+    [InlineData("<TargetFramework></TargetFramework><TargetFrameworks>net48;net8.0</TargetFrameworks>")]
+    [InlineData("<TargetFramework>net8.0-windows</TargetFramework>")]
     public void A_wave_warning_the_build_reports_is_refused_under_TreatWarningsAsErrors(string properties)
     {
         // The SDK sets WarningLevel to the major version of a .NETCoreApp target, or 9999 under AnalysisLevel preview.
@@ -237,6 +239,30 @@ public class ProjectPropertiesTests
 
         Assert.Equal(0, result.Code);
         Assert.Contains("generated Demo.Kinds.IsMath(object)", result.Out);
+    }
+
+    /// <summary>A lowercase `l` suffix: CS0078, a warning of level 4, so level 3 keeps it and level 4 reports it.</summary>
+    private const string LevelFourBody = "return 1l == 0;";
+
+    [Theory]
+    [InlineData("<TargetFramework>net48</TargetFramework>", 1)]
+    [InlineData("<TargetFramework>netstandard2.0</TargetFramework>", 1)]
+    [InlineData("<TargetFramework>netcoreapp3.1</TargetFramework>", 0)]
+    public void A_level_four_warning_follows_the_target_level(string properties, int code)
+    {
+        // .NET Framework and .NET Standard build at level 4; netcoreapp3.1 builds at level 3.
+        using var project = new TempProject();
+        project.Write("Text.cs", WaveSource);
+        project.Write("Demo.csproj", Csproj(properties + "<TreatWarningsAsErrors>true</TreatWarningsAsErrors>"));
+
+        var result = Cli.Run("generate", project.Directory, "--model", project.FakeModel(LevelFourBody));
+
+        Assert.Equal(code, result.Code);
+        Assert.Equal(code == 0, File.Exists(project.LockPath));
+        if (code == 1)
+        {
+            Assert.Contains("CS0078", result.Err);
+        }
     }
 
     [Fact]
