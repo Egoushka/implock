@@ -1,0 +1,13 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Implock.Generator/Implock.Generator.csproj" />
+    <Project Path="src/Implock.Cli/Implock.Cli.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Implock.Generator.Tests/Implock.Generator.Tests.csproj" />
+    <Project Path="tests/Implock.Cli.Tests/Implock.Cli.Tests.csproj" />
+  </Folder>
+  <Folder Name="/samples/">
+    <Project Path="samples/Implock.Sample/Implock.Sample.csproj" />
+  </Folder>
+</Solution>
