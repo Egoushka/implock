@@ -145,7 +145,6 @@ internal static class GenerateCommand
 
         var errors = run.Compilation.GetDiagnostics()
             .Where(d => d.Severity == DiagnosticSeverity.Error && d.Location.SourceTree == tree)
-            .Select(d => d.ToString())
             .ToList();
         if (errors.Count == 0)
         {
@@ -153,9 +152,8 @@ internal static class GenerateCommand
         }
 
         // CS0246, CS0234 and CS0012 are the errors a missing reference gives: say why one may be missing.
-        var missingReference = project.RestoreHint is not null && run.Compilation.GetDiagnostics()
-            .Any(d => d.Severity == DiagnosticSeverity.Error && d.Location.SourceTree == tree && d.Id is "CS0246" or "CS0234" or "CS0012");
-        return "the body does not compile: " + string.Join("; ", errors) + (missingReference ? " " + project.RestoreHint : string.Empty);
+        var missingReference = project.RestoreHint is not null && errors.Any(d => d.Id is "CS0246" or "CS0234" or "CS0012");
+        return "the body does not compile: " + string.Join("; ", errors.Select(d => d.ToString())) + (missingReference ? " " + project.RestoreHint : string.Empty);
     }
 
     private static string CheckCommandMessages(GeneratorRun run, MethodSpec spec) =>

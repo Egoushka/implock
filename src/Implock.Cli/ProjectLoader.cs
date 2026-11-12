@@ -49,7 +49,7 @@ internal sealed class LoadedProject
     /// <summary>The refusal for a spec whose signature names a type this compilation cannot see.</summary>
     public string UnresolvedTypeMessage(MethodSpec spec) =>
         "cannot lock " + spec.Id + ": the type '" + spec.UnresolvedType + "' does not resolve here. The CLI sees the .cs files, "
-        + "the runtime libraries and the restored NuGet packages, not other projects." + (RestoreHint is null ? string.Empty : " " + RestoreHint);
+        + "the runtime libraries and the restored NuGet packages, not other projects or framework references such as ASP.NET Core." + (RestoreHint is null ? string.Empty : " " + RestoreHint);
 
     public string LockPath => Path.Combine(Directory, LockFile.FileName);
 
@@ -226,7 +226,8 @@ internal sealed class LoadedProject
 
     /// <summary>
     /// The compile assemblies of the project's packages, read from obj/project.assets.json without any network call.
-    /// A package assembly with the file name of a runtime assembly is left out, so the runtime's copy wins as it does in the SDK.
+    /// A package assembly with the file name of an assembly the tool already references (the runtime's own, and the tool's
+    /// Roslyn and generator copies) is left out, so that copy wins whatever its version; the SDK would keep the higher version.
     /// </summary>
     private static List<MetadataReference> PackageReferences(string directory, Dictionary<string, string> properties, ImmutableArray<MetadataReference> platform, out string? restoreHint)
     {

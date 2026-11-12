@@ -82,7 +82,7 @@ Limits, stated plainly:
 
 | Claim | Value | Source |
 |---|---|---|
-| Automated tests | 81, 0 failed | `dotnet test` on this commit |
+| Automated tests | 82, 0 failed | `dotnet test` on this commit |
 | Planted looser cases found in the sample pair | 3 input classes of 48 | `implock report` on `samples/report` |
 | Looser classes for an identical pair | 0 | `ReportTests` in `tests/Implock.Cli.Tests` |
 

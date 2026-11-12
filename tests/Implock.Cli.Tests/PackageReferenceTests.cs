@@ -130,6 +130,7 @@ public class PackageReferenceTests
     [Fact]
     public void Placeholders_and_project_entries_are_skipped()
     {
+        // Neither entry names a file on disk, so reading either one would add the restore hint to this CS0246 refusal.
         using var project = new TempProject();
         project.Write("Text.cs", UsingSource);
         project.Write("Demo.csproj", Csproj("net10.0"));
@@ -141,9 +142,25 @@ public class PackageReferenceTests
         };
         WriteAssets(project, folder, ("net10.0", entries));
 
-        var result = Cli.Run("generate", project.Directory, "--model", project.FakeModel(ShoutBody));
+        var result = Cli.Run("generate", project.Directory, "--model", project.FakeModel("return new Nowhere().ToString();"));
 
-        Assert.Equal(0, result.Code);
+        Assert.Equal(1, result.Code);
+        Assert.Contains("CS0246", result.Err, StringComparison.Ordinal);
+        Assert.DoesNotContain("dotnet restore", result.Err, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void A_body_error_that_is_not_a_missing_reference_does_not_suggest_dotnet_restore()
+    {
+        using var project = new TempProject();
+        project.Write("Text.cs", UsingSource.Replace("using Fake.Lib;", string.Empty, StringComparison.Ordinal));
+        project.Write("Demo.csproj", Csproj("net10.0"));
+
+        var result = Cli.Run("generate", project.Directory, "--model", project.FakeModel("return 1;"));
+
+        Assert.Equal(1, result.Code);
+        Assert.Contains("CS0029", result.Err, StringComparison.Ordinal);
+        Assert.DoesNotContain("dotnet restore", result.Err, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -229,10 +246,13 @@ public class PackageReferenceTests
     private static void WriteAssets(TempProject project, string packageFolder, params (string Framework, Dictionary<string, object> Entries)[] targets)
     {
         var libraries = new Dictionary<string, object>();
-        foreach (var key in targets.SelectMany(t => t.Entries).Where(e => e.Value is Dictionary<string, object> d && (string)d["type"] == "package").Select(e => e.Key).Distinct())
+        foreach (var (key, value) in targets.SelectMany(t => t.Entries).DistinctBy(e => e.Key))
         {
             var (id, version) = (key.Split('/')[0], key.Split('/')[1]);
-            libraries[key] = new { type = "package", path = id.ToLowerInvariant() + "/" + version };
+            var type = (string)((Dictionary<string, object>)value)["type"];
+            libraries[key] = type == "package"
+                ? new { type, path = id.ToLowerInvariant() + "/" + version }
+                : new { type, path = "../" + id + "/" + id + ".csproj" };
         }
 
         var assets = new Dictionary<string, object>
