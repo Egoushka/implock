@@ -172,6 +172,8 @@ public class CheckAndGenerateTests
                 Busy,
             }
 
+            public readonly record struct Widget(string Name);
+
             public sealed class Snapshot
             {
                 private int secret = 7;
@@ -193,7 +195,7 @@ public class CheckAndGenerateTests
                 }
 
                 [Implock.Implement]
-                public static partial int Score(Snapshot[] snapshots, Mood mood);
+                public static partial int Score(Snapshot[] snapshots, System.Collections.Generic.IReadOnlyList<Widget> widgets, Mood mood);
             }
             """);
         var promptFile = Path.Combine(project.Directory, "prompt.txt");
@@ -207,6 +209,8 @@ public class CheckAndGenerateTests
         Assert.Contains("public int Count { get; set; }", prompt);
         Assert.Contains("public string Label { get; set; }", prompt);
         Assert.Contains("class Snapshot", prompt);
+        Assert.Contains("struct Widget", prompt);
+        Assert.DoesNotContain("IReadOnlyList<T>", prompt);
         Assert.DoesNotContain("secret", prompt);
         Assert.DoesNotContain("Secret()", prompt);
         Assert.Contains("public enum Mood\n  Calm\n  Busy\n", prompt);
