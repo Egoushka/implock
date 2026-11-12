@@ -1,5 +1,8 @@
 using System.Collections.Immutable;
+using System.Globalization;
 using System.Text.RegularExpressions;
+using System.Xml;
+using System.Xml.Linq;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.Text;
@@ -8,7 +11,10 @@ namespace Implock.Cli;
 
 /// <summary>
 /// Builds a compilation from the .cs files of one project directory and runs the generator over it.
-/// Limits: no NuGet package resolution and no MSBuild evaluation; references are the runtime's own assemblies.
+/// Compiler settings come from the unconditional property groups of the project file and of every
+/// Directory.Build.props above it (outermost first, so the project file wins), with $(Property) references
+/// expanded to the value read so far. Limits: no NuGet package resolution and no MSBuild evaluation
+/// (conditions, imports and property functions are not seen); references are the runtime's own assemblies.
 /// </summary>
 internal sealed class LoadedProject
 {
@@ -63,18 +69,39 @@ internal sealed class LoadedProject
             trees.Add(CSharpSyntaxTree.ParseText(text, parseOptions, Path.GetRelativePath(directory, file).Replace('\\', '/')));
         }
 
-        var nullable = ReadFlag(directory, csproj, "Nullable");
-        var implicitUsings = ReadFlag(directory, csproj, "ImplicitUsings");
-        if (implicitUsings)
+        var properties = ReadProperties(directory, csproj);
+        if (IsOn(properties, "ImplicitUsings"))
         {
             var global = string.Concat(ImplicitUsings.Select(u => "global using global::" + u + ";\n"));
             trees.Add(CSharpSyntaxTree.ParseText(global, parseOptions, "implicit-usings.g.cs"));
         }
 
-        var options = new CSharpCompilationOptions(
-            OutputKind.DynamicallyLinkedLibrary,
-            nullableContextOptions: nullable ? NullableContextOptions.Enable : NullableContextOptions.Disable);
-        return new LoadedProject(directory, trees.ToImmutableArray(), options, PlatformReferences());
+        // The build hands these settings to csc, so the compiler's own parser reads them here: the same
+        // id forms (bare numbers, the `nullable` group) and the same precedence as the real build.
+        var arguments = new List<string> { "/noconfig", "/target:library" };
+        if (properties.GetValueOrDefault("Nullable", string.Empty) is { Length: > 0 } nullable)
+        {
+            arguments.Add("/nullable:" + nullable);
+        }
+
+        if (IsOn(properties, "TreatWarningsAsErrors"))
+        {
+            arguments.Add("/warnaserror+");
+        }
+
+        AddList(arguments, "/warnaserror+:", properties, "WarningsAsErrors");
+        AddList(arguments, "/warnaserror-:", properties, "WarningsNotAsErrors");
+        AddList(arguments, "/nowarn:", properties, "NoWarn");
+        var parsed = CSharpCommandLineParser.Default.Parse(arguments, directory, sdkDirectory: null);
+
+        // No source list is given, so CS2008 (no sources) and CS1562 (no output name) always appear; anything else is a bad setting.
+        var errors = parsed.Errors.Where(e => e.Id is not ("CS2008" or "CS1562")).ToList();
+        if (errors.Count > 0)
+        {
+            throw new UsageException("cannot read compiler settings: " + string.Join("; ", errors.Select(e => e.GetMessage(CultureInfo.InvariantCulture))));
+        }
+
+        return new LoadedProject(directory, trees.ToImmutableArray(), parsed.CompilationOptions, PlatformReferences());
     }
 
     public string? ReadLockText()
@@ -117,24 +144,68 @@ internal sealed class LoadedProject
         }
     }
 
-    private static bool ReadFlag(string directory, string? csproj, string name)
-    {
-        var pattern = new Regex("<" + name + @">\s*(enable|true)\s*</" + name + ">", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
-        if (csproj is not null && pattern.IsMatch(File.ReadAllText(csproj)))
-        {
-            return true;
-        }
+    private static readonly Regex PropertyReference = new(@"\$\((\w+)\)", RegexOptions.CultureInvariant);
+    private static readonly Regex OtherExpression = new(@"\$\([^)]*\)", RegexOptions.CultureInvariant);
 
+    private static Dictionary<string, string> ReadProperties(string directory, string? csproj)
+    {
+        var files = new List<string>();
         for (var dir = new DirectoryInfo(directory); dir is not null; dir = dir.Parent)
         {
             var props = Path.Combine(dir.FullName, "Directory.Build.props");
-            if (File.Exists(props) && pattern.IsMatch(File.ReadAllText(props)))
+            if (File.Exists(props))
             {
-                return true;
+                files.Insert(0, props);
             }
         }
 
-        return false;
+        if (csproj is not null)
+        {
+            files.Add(csproj);
+        }
+
+        var properties = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var file in files)
+        {
+            XDocument document;
+            try
+            {
+                document = XDocument.Load(file);
+            }
+            catch (XmlException e)
+            {
+                throw new UsageException("cannot read " + file + ": " + e.Message);
+            }
+
+            var groups = document.Root?.Elements().Where(e => e.Name.LocalName == "PropertyGroup" && e.Attribute("Condition") is null)
+                ?? Enumerable.Empty<XElement>();
+            foreach (var property in groups.SelectMany(g => g.Elements()).Where(e => e.Attribute("Condition") is null))
+            {
+                var value = PropertyReference.Replace(property.Value, m => properties.GetValueOrDefault(m.Groups[1].Value, string.Empty));
+                properties[property.Name.LocalName] = OtherExpression.Replace(value, string.Empty).Trim();
+            }
+        }
+
+        return properties;
+    }
+
+    private static bool IsOn(Dictionary<string, string> properties, string name)
+    {
+        var value = properties.GetValueOrDefault(name, string.Empty);
+        return value.Equals("true", StringComparison.OrdinalIgnoreCase) || value.Equals("enable", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static readonly char[] ListSeparators = { ';', ',' };
+
+    private static void AddList(List<string> arguments, string option, Dictionary<string, string> properties, string name)
+    {
+        // Like the build's Csc task: split on either separator and trim each id, so a list that spans lines still parses.
+        var ids = properties.GetValueOrDefault(name, string.Empty)
+            .Split(ListSeparators, StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+        if (ids.Length > 0)
+        {
+            arguments.Add(option + string.Join(',', ids));
+        }
     }
 
     internal static ImmutableArray<MetadataReference> PlatformReferences()
