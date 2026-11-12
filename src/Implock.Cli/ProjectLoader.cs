@@ -101,6 +101,8 @@ internal sealed class LoadedProject
             arguments.Add("/warnaserror+");
         }
 
+        arguments.Add("/warn:" + WarningLevel(properties));
+
         AddList(arguments, "/warnaserror+:", properties, "WarningsAsErrors");
         AddList(arguments, "/warnaserror-:", properties, "WarningsNotAsErrors");
         AddList(arguments, "/nowarn:", properties, "NoWarn");
@@ -201,6 +203,47 @@ internal sealed class LoadedProject
         }
 
         return properties;
+    }
+
+    private static readonly Regex NetCoreApp = new(@"^net(?:coreapp)?(\d+)\.\d+$", RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
+
+    /// <summary>
+    /// The warning level the SDK gives csc (Microsoft.NET.Sdk.Analyzers.targets): WarningLevel when set, else 9999 under
+    /// AnalysisLevel preview, else the major version for .NETCoreApp and 4, the compiler default, for anything else. The SDK
+    /// sets it per target and the build fails when any target fails, so a multi-target project takes the highest.
+    /// </summary>
+    private static string WarningLevel(Dictionary<string, string> properties)
+    {
+        if (properties.GetValueOrDefault("WarningLevel", string.Empty) is { Length: > 0 } level)
+        {
+            return level;
+        }
+
+        if (properties.GetValueOrDefault("AnalysisLevel", string.Empty).Equals("preview", StringComparison.OrdinalIgnoreCase))
+        {
+            return "9999";
+        }
+
+        var framework = properties.GetValueOrDefault("TargetFramework", string.Empty);
+        var frameworks = framework.Length > 0
+            ? [framework]
+            : properties.GetValueOrDefault("TargetFrameworks", string.Empty).Split(';', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+        return frameworks
+            .Select(f => NetCoreApp.Match(f.Split('-')[0]) is { Success: true } match ? int.Parse(match.Groups[1].Value, CultureInfo.InvariantCulture) : 4)
+            .DefaultIfEmpty(4)
+            .Max()
+            .ToString(CultureInfo.InvariantCulture);
+    }
+
+    /// <summary>TargetFramework, else the first of TargetFrameworks, else empty.</summary>
+    private static string TargetFramework(Dictionary<string, string> properties)
+    {
+        var framework = properties.GetValueOrDefault("TargetFramework", string.Empty);
+        return framework.Length > 0
+            ? framework
+            : properties.GetValueOrDefault("TargetFrameworks", string.Empty)
+                .Split(';', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
+                .FirstOrDefault() ?? string.Empty;
     }
 
     private static bool IsOn(Dictionary<string, string> properties, string name)
@@ -317,13 +360,7 @@ internal sealed class LoadedProject
     /// <summary>The target for the project's TargetFramework, else the first of TargetFrameworks, else the first one without a runtime id.</summary>
     private static JsonElement? ChooseTarget(JsonElement targets, Dictionary<string, string> properties)
     {
-        var framework = properties.GetValueOrDefault("TargetFramework", string.Empty);
-        if (framework.Length == 0)
-        {
-            framework = properties.GetValueOrDefault("TargetFrameworks", string.Empty)
-                .Split(';', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
-                .FirstOrDefault() ?? string.Empty;
-        }
+        var framework = TargetFramework(properties);
 
         var candidates = targets.EnumerateObject().Where(t => t.Value.ValueKind == JsonValueKind.Object && !t.Name.Contains('/')).ToList();
         var chosen = candidates.FirstOrDefault(t => string.Equals(t.Name, framework, StringComparison.OrdinalIgnoreCase));

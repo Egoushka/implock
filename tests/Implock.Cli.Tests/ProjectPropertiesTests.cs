@@ -189,6 +189,96 @@ public class ProjectPropertiesTests
         Assert.False(File.Exists(project.LockPath));
     }
 
+    private const string WaveSource = """
+        namespace Demo;
+
+        public static partial class Kinds
+        {
+            [Implock.Implement("no: IsMath(1) == false")]
+            public static partial bool IsMath(object input);
+        }
+        """;
+
+    /// <summary>`is` against a static type: CS7023, a warning of wave 5, so only warning level 5 or higher reports it.</summary>
+    private const string WaveFiveBody = "return input is System.Math;";
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("<TargetFramework>net5.0</TargetFramework>")]
+    [InlineData("<TargetFramework>netcoreapp3.1</TargetFramework><AnalysisLevel>preview</AnalysisLevel>")]
+    [InlineData("<TargetFramework></TargetFramework><TargetFrameworks>net8.0;net48</TargetFrameworks>")]
+    [InlineData("<TargetFramework></TargetFramework><TargetFrameworks>net48;net8.0</TargetFrameworks>")]
+    [InlineData("<TargetFramework>net8.0-windows</TargetFramework>")]
+    public void A_wave_warning_the_build_reports_is_refused_under_TreatWarningsAsErrors(string properties)
+    {
+        // The SDK sets WarningLevel to the major version of a .NETCoreApp target, or 9999 under AnalysisLevel preview.
+        using var project = new TempProject();
+        project.Write("Text.cs", WaveSource);
+        project.Write("Demo.csproj", Csproj(properties + "<TreatWarningsAsErrors>true</TreatWarningsAsErrors>"));
+
+        var result = Cli.Run("generate", project.Directory, "--model", project.FakeModel(WaveFiveBody));
+
+        Assert.Equal(1, result.Code);
+        Assert.Contains("CS7023", result.Err);
+        Assert.False(File.Exists(project.LockPath));
+    }
+
+    [Theory]
+    [InlineData("<WarningLevel>4</WarningLevel>")]
+    [InlineData("<TargetFramework>net48</TargetFramework>")]
+    [InlineData("<TargetFramework>netcoreapp3.1</TargetFramework>")]
+    [InlineData("<TargetFramework>netstandard2.0</TargetFramework>")]
+    public void A_wave_warning_below_the_build_level_is_kept(string properties)
+    {
+        // An explicit WarningLevel wins; .NET Framework is 4, netcoreapp3.1 is 3, and .NET Standard leaves the compiler default of 4.
+        using var project = new TempProject();
+        project.Write("Text.cs", WaveSource);
+        project.Write("Demo.csproj", Csproj(properties + "<TreatWarningsAsErrors>true</TreatWarningsAsErrors>"));
+
+        var result = Cli.Run("generate", project.Directory, "--model", project.FakeModel(WaveFiveBody));
+
+        Assert.Equal(0, result.Code);
+        Assert.Contains("generated Demo.Kinds.IsMath(object)", result.Out);
+    }
+
+    /// <summary>A lowercase `l` suffix: CS0078, a warning of level 4, so level 3 keeps it and level 4 reports it.</summary>
+    private const string LevelFourBody = "return 1l == 0;";
+
+    [Theory]
+    [InlineData("<TargetFramework>net48</TargetFramework>", 1)]
+    [InlineData("<TargetFramework>netstandard2.0</TargetFramework>", 1)]
+    [InlineData("<TargetFramework>netcoreapp3.1</TargetFramework>", 0)]
+    public void A_level_four_warning_follows_the_target_level(string properties, int code)
+    {
+        // .NET Framework and .NET Standard build at level 4; netcoreapp3.1 builds at level 3.
+        using var project = new TempProject();
+        project.Write("Text.cs", WaveSource);
+        project.Write("Demo.csproj", Csproj(properties + "<TreatWarningsAsErrors>true</TreatWarningsAsErrors>"));
+
+        var result = Cli.Run("generate", project.Directory, "--model", project.FakeModel(LevelFourBody));
+
+        Assert.Equal(code, result.Code);
+        Assert.Equal(code == 0, File.Exists(project.LockPath));
+        if (code == 1)
+        {
+            Assert.Contains("CS0078", result.Err);
+        }
+    }
+
+    [Fact]
+    public void A_WarningLevel_the_compiler_rejects_exits_2()
+    {
+        using var project = new TempProject();
+        project.Write("Text.cs", WaveSource);
+        project.Write("Demo.csproj", Csproj("<WarningLevel>high</WarningLevel>"));
+
+        var result = Cli.Run("generate", project.Directory, "--model", project.FakeModel(WaveFiveBody));
+
+        Assert.Equal(2, result.Code);
+        Assert.Contains("'warn' option", result.Err, StringComparison.Ordinal);
+        Assert.False(File.Exists(project.LockPath));
+    }
+
     private static string Csproj(string properties) =>
         "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net10.0</TargetFramework>" + properties + "</PropertyGroup></Project>";
 }
