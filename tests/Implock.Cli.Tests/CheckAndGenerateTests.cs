@@ -286,6 +286,42 @@ public class CheckAndGenerateTests
     }
 
     [Fact]
+    public void Regen_splits_the_id_list_only_on_commas_outside_brackets()
+    {
+        using var project = new TempProject();
+        project.Write("Shapes.cs", """
+            namespace Demo;
+
+            public static partial class Text
+            {
+                [Implock.Implement]
+                public static partial int Count(System.Collections.Generic.IReadOnlyDictionary<string, int> map);
+
+                [Implock.Implement]
+                public static partial int Pad(string text, int width);
+
+                [Implock.Implement]
+                public static partial int Cells(int[,] grid);
+            }
+            """);
+        const string body = "throw new System.NotImplementedException();";
+        var seeded = Cli.Run("generate", project.Directory, "--model", project.FakeModel(body));
+        Assert.Equal(0, seeded.Code);
+        string[] ids =
+        [
+            "Demo.Text.Pad(string, int)",
+            "Demo.Text.Count(System.Collections.Generic.IReadOnlyDictionary<string, int>)",
+            "Demo.Text.Cells(int[,])",
+            "Demo.Text.Reverse(string)",
+        ];
+
+        var result = Cli.Run("generate", project.Directory, "--regen", string.Join(" , ", ids), "--model", project.FakeModel(body));
+
+        Assert.Equal(0, result.Code);
+        foreach (var id in ids) Assert.Contains("generated " + id, result.Out);
+    }
+
+    [Fact]
     public void Regen_with_no_id_exits_2()
     {
         using var project = new TempProject();
