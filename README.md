@@ -64,7 +64,7 @@ The spec in your code, from `samples/Implock.Sample/Text.cs`:
 public static partial int WordCount(string text);
 ```
 
-Add a body with `implock generate samples/Implock.Sample --model "your-command"`. The default model command is `claude -p`; `IMPLOCK_MODEL` and `--model` override it. `--prune` drops lock entries whose method no longer exists. `--regen ID[,ID...]` regenerates the listed methods (ids as written in `implement.lock`, separated by commas outside `<>`, `()` and `[]`) even when their lock entry is current; an empty list or an id that names no `[Implement]` method exits 2, and a refused body leaves the previous entry in place. The prompt carries signature-only outlines (no bodies) of the containing type's other members and of the project types used in the method's signature; the spec hash does not include them. Exit codes: 0 ok, 1 findings, 2 usage or failure.
+Add a body with `implock generate samples/Implock.Sample --model "your-command"`. The default model command is `claude -p`; `IMPLOCK_MODEL` and `--model` override it. `--prune` drops lock entries whose method no longer exists. `--regen ID[,ID...]` regenerates the listed methods (ids as written in `implement.lock`, separated by commas outside `<>`, `()` and `[]`) even when their lock entry is current; an empty list or an id that names no `[Implement]` method exits 2, and a refused body leaves the previous entry in place. The prompt carries signature-only outlines (no bodies) of the containing type's other members, of the project types used in the method's signature, and, one level deeper, of the project types those outlines' members name; the spec hash does not include them. Exit codes: 0 ok, 1 findings, 2 usage or failure.
 
 ## How it works
 
@@ -82,7 +82,7 @@ Limits, stated plainly:
 
 | Claim | Value | Source |
 |---|---|---|
-| Automated tests | 82, 0 failed | `dotnet test` on this commit |
+| Automated tests | 83, 0 failed | `dotnet test` on this commit |
 | Planted looser cases found in the sample pair | 3 input classes of 48 | `implock report` on `samples/report` |
 | Looser classes for an identical pair | 0 | `ReportTests` in `tests/Implock.Cli.Tests` |
 
