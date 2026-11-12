@@ -219,6 +219,73 @@ public class CheckAndGenerateTests
     }
 
     [Fact]
+    public void The_prompt_outlines_the_types_that_listed_members_use_one_level_deep()
+    {
+        using var project = new TempProject();
+        project.Write("Text.cs", """
+            namespace Demo;
+
+            public sealed class Address
+            {
+                public string City { get; set; } = "";
+            }
+
+            public sealed class Customer
+            {
+                public string Name { get; set; } = "";
+
+                public Address Home { get; set; } = new();
+            }
+
+            public enum Channel
+            {
+                Web,
+                Shop,
+            }
+
+            public sealed class Hidden
+            {
+                public int Never { get; set; }
+            }
+
+            public sealed class Order
+            {
+                private Hidden hidden = new();
+
+                public Customer Buyer { get; set; } = new();
+
+                public Channel Source(System.Collections.Generic.List<Customer> others) => Channel.Web;
+            }
+
+            public sealed class Ledger
+            {
+                public int Total { get; set; }
+            }
+
+            public static partial class Text
+            {
+                private static Ledger ledger = new();
+
+                [Implock.Implement]
+                public static partial string BuyerName(Order order);
+            }
+            """);
+        var promptFile = Path.Combine(project.Directory, "prompt.txt");
+
+        Cli.Run("generate", project.Directory, "--model", project.RecordingModel(promptFile, "return order.Buyer.Name;"));
+
+        var prompt = File.ReadAllText(promptFile);
+        Assert.Contains("public sealed class Order\n", prompt);
+        Assert.Contains("public sealed class Customer\n  public string Name { get; set; }\n  public Address Home { get; set; }\n", prompt);
+        Assert.Contains("public enum Channel\n  Web\n  Shop\n", prompt);
+        Assert.Contains("public sealed class Ledger\n  public int Total { get; set; }\n", prompt);
+        Assert.DoesNotContain("class Address", prompt);
+        Assert.DoesNotContain("class Hidden", prompt);
+        Assert.Equal(prompt.IndexOf("class Customer", StringComparison.Ordinal), prompt.LastIndexOf("class Customer", StringComparison.Ordinal));
+        Assert.True(prompt.IndexOf("class Order", StringComparison.Ordinal) < prompt.IndexOf("class Customer", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void The_prompt_omits_the_type_block_when_nothing_is_in_scope()
     {
         using var project = new TempProject();

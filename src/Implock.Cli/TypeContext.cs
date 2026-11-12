@@ -64,13 +64,34 @@ internal static class TypeContext
             Collect(parameter.Type, seen, found);
         }
 
-        foreach (var type in found)
+        var blocks = found.Select(t => (Type: t, Members: Members(t, publicAndInternalOnly: true))).ToList();
+
+        // One level deeper: the project types the listed members name. Their own members are not followed.
+        var deeper = new List<INamedTypeSymbol>();
+        foreach (var member in siblings.Concat(blocks.SelectMany(b => b.Members)))
         {
-            AppendType(outline, type, Members(type, publicAndInternalOnly: true));
+            foreach (var used in SignatureTypes(member))
+            {
+                Collect(used, seen, deeper);
+            }
+        }
+
+        foreach (var (type, members) in blocks.Concat(deeper.Select(t => (Type: t, Members: Members(t, publicAndInternalOnly: true)))))
+        {
+            AppendType(outline, type, members);
         }
 
         return outline.ToString();
     }
+
+    private static IEnumerable<ITypeSymbol> SignatureTypes(ISymbol member) => member switch
+    {
+        IFieldSymbol field => [field.Type],
+        IPropertySymbol property => property.Parameters.Select(p => p.Type).Prepend(property.Type),
+        IEventSymbol @event => [@event.Type],
+        IMethodSymbol method => method.Parameters.Select(p => p.Type).Prepend(method.ReturnType),
+        _ => [],
+    };
 
     private static void Collect(ITypeSymbol type, HashSet<INamedTypeSymbol> seen, List<INamedTypeSymbol> found)
     {
