@@ -150,7 +150,7 @@ internal static class TypeContext
     private static List<ISymbol> Members(INamedTypeSymbol type, bool publicAndInternalOnly) =>
         type.GetMembers()
             .Where(m => !m.IsImplicitlyDeclared && m.DeclaringSyntaxReferences.Length > 0 && IsListed(m))
-            .Where(m => !publicAndInternalOnly || m.DeclaredAccessibility is Accessibility.Public or Accessibility.Internal or Accessibility.ProtectedOrInternal)
+            .Where(m => !publicAndInternalOnly || m.DeclaredAccessibility is Accessibility.Public or Accessibility.Internal)
             .OrderBy(m => m.DeclaringSyntaxReferences[0].SyntaxTree.FilePath, StringComparer.Ordinal)
             .ThenBy(m => m.DeclaringSyntaxReferences[0].Span.Start)
             .ToList();

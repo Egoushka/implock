@@ -26,6 +26,11 @@ internal static class GenerateCommand
         if (options.Value("--regen") is { } regen)
         {
             var ids = regen.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToHashSet(StringComparer.Ordinal);
+            if (ids.Count == 0)
+            {
+                throw new UsageException("--regen needs at least one id");
+            }
+
             var known = specs.Select(s => s.Id).ToHashSet(StringComparer.Ordinal);
             if (ids.FirstOrDefault(id => !known.Contains(id)) is { } unknown)
             {

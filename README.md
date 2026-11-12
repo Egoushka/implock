@@ -64,7 +64,7 @@ The spec in your code, from `samples/Implock.Sample/Text.cs`:
 public static partial int WordCount(string text);
 ```
 
-Add a body with `implock generate samples/Implock.Sample --model "your-command"`. The default model command is `claude -p`; `IMPLOCK_MODEL` and `--model` override it. `--prune` drops lock entries whose method no longer exists. `--regen ID[,ID...]` regenerates the listed methods (ids as written in `implement.lock`) even when their lock entry is current; an id that names no `[Implement]` method exits 2, and a refused body leaves the previous entry in place. The prompt carries signature-only outlines (no bodies) of the containing type's other members and of the project types used in the method's signature; the spec hash does not include them. Exit codes: 0 ok, 1 findings, 2 usage or failure.
+Add a body with `implock generate samples/Implock.Sample --model "your-command"`. The default model command is `claude -p`; `IMPLOCK_MODEL` and `--model` override it. `--prune` drops lock entries whose method no longer exists. `--regen ID[,ID...]` regenerates the listed methods (ids as written in `implement.lock`) even when their lock entry is current; an empty list or an id that names no `[Implement]` method exits 2, and a refused body leaves the previous entry in place. The prompt carries signature-only outlines (no bodies) of the containing type's other members and of the project types used in the method's signature; the spec hash does not include them. Exit codes: 0 ok, 1 findings, 2 usage or failure.
 
 ## How it works
 

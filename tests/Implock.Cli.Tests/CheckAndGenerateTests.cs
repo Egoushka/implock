@@ -166,11 +166,21 @@ public class CheckAndGenerateTests
         project.Write("Text.cs", """
             namespace Demo;
 
+            public enum Mood
+            {
+                Calm,
+                Busy,
+            }
+
             public sealed class Snapshot
             {
+                private int secret = 7;
+
                 public int Count { get; set; }
 
                 public string Label { get; set; } = "";
+
+                private int Secret() => secret;
             }
 
             public static partial class Text
@@ -183,7 +193,7 @@ public class CheckAndGenerateTests
                 }
 
                 [Implock.Implement]
-                public static partial int Score(Snapshot snapshot);
+                public static partial int Score(Snapshot[] snapshots, Mood mood);
             }
             """);
         var promptFile = Path.Combine(project.Directory, "prompt.txt");
@@ -197,6 +207,9 @@ public class CheckAndGenerateTests
         Assert.Contains("public int Count { get; set; }", prompt);
         Assert.Contains("public string Label { get; set; }", prompt);
         Assert.Contains("class Snapshot", prompt);
+        Assert.DoesNotContain("secret", prompt);
+        Assert.DoesNotContain("Secret()", prompt);
+        Assert.Contains("public enum Mood\n  Calm\n  Busy\n", prompt);
         Assert.DoesNotContain("DISTINCTIVE-HELPER-LITERAL", prompt);
         Assert.Equal(prompt.IndexOf("Score(", StringComparison.Ordinal), prompt.LastIndexOf("Score(", StringComparison.Ordinal));
     }
@@ -243,6 +256,41 @@ public class CheckAndGenerateTests
         Assert.Equal(1, result.Code);
         Assert.Contains("missingName", result.Err);
         Assert.Equal(before, File.ReadAllBytes(project.LockPath));
+    }
+
+    [Fact]
+    public void Regen_also_generates_methods_that_are_still_pending()
+    {
+        using var project = new TempProject();
+        Cli.Run("generate", project.Directory, "--model", project.FakeModel(TempProject.ReverseBody));
+        project.Write("Twice.cs", """
+            namespace Demo;
+
+            public static partial class Text
+            {
+                [Implock.Implement]
+                public static partial string Twice(string input);
+            }
+            """);
+
+        var result = Cli.Run("generate", project.Directory, "--regen", "Demo.Text.Reverse(string)", "--model", project.FakeModel("return input + input;"));
+
+        Assert.Equal(0, result.Code);
+        Assert.Contains("generated Demo.Text.Reverse(string)", result.Out);
+        Assert.Contains("generated Demo.Text.Twice(string)", result.Out);
+        Assert.DoesNotContain("Array.Reverse", project.ReadLock());
+    }
+
+    [Fact]
+    public void Regen_with_no_id_exits_2()
+    {
+        using var project = new TempProject();
+
+        var result = Cli.Run("generate", project.Directory, "--regen", ",", "--model", "sh /nonexistent-model-command");
+
+        Assert.Equal(2, result.Code);
+        Assert.Contains("implock: --regen needs at least one id", result.Err);
+        Assert.False(File.Exists(project.LockPath));
     }
 
     [Fact]
