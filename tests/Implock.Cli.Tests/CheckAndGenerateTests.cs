@@ -160,6 +160,156 @@ public class CheckAndGenerateTests
     }
 
     [Fact]
+    public void The_prompt_lists_sibling_member_signatures_and_signature_types_without_bodies()
+    {
+        using var project = new TempProject();
+        project.Write("Text.cs", """
+            namespace Demo;
+
+            public enum Mood
+            {
+                Calm,
+                Busy,
+            }
+
+            public readonly record struct Widget(string Name);
+
+            public sealed class Snapshot
+            {
+                private int secret = 7;
+
+                public int Count { get; set; }
+
+                public string Label { get; set; } = "";
+
+                private int Secret() => secret;
+            }
+
+            public static partial class Text
+            {
+                private static readonly int Limit = 3;
+
+                private static string Helper(int n)
+                {
+                    return "DISTINCTIVE-HELPER-LITERAL" + n;
+                }
+
+                [Implock.Implement]
+                public static partial int Score(Snapshot[] snapshots, System.Collections.Generic.List<Widget> widgets, Mood mood);
+            }
+            """);
+        var promptFile = Path.Combine(project.Directory, "prompt.txt");
+
+        Cli.Run("generate", project.Directory, "--model", project.RecordingModel(promptFile, "return 1;"));
+
+        var prompt = File.ReadAllText(promptFile);
+        Assert.Contains("Types in scope (signatures only, no bodies):", prompt);
+        Assert.Contains("private static readonly int Limit", prompt);
+        Assert.Contains("private static string Helper(int n)", prompt);
+        Assert.Contains("public int Count { get; set; }", prompt);
+        Assert.Contains("public string Label { get; set; }", prompt);
+        Assert.Contains("class Snapshot", prompt);
+        Assert.Contains("struct Widget", prompt);
+        Assert.DoesNotContain("class List<T>", prompt);
+        Assert.DoesNotContain("secret", prompt);
+        Assert.DoesNotContain("Secret()", prompt);
+        Assert.Contains("public enum Mood\n  Calm\n  Busy\n", prompt);
+        Assert.DoesNotContain("DISTINCTIVE-HELPER-LITERAL", prompt);
+        Assert.Equal(prompt.IndexOf("Score(", StringComparison.Ordinal), prompt.LastIndexOf("Score(", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void The_prompt_omits_the_type_block_when_nothing_is_in_scope()
+    {
+        using var project = new TempProject();
+        var promptFile = Path.Combine(project.Directory, "prompt.txt");
+
+        Cli.Run("generate", project.Directory, "--model", project.RecordingModel(promptFile, TempProject.ReverseBody));
+
+        Assert.DoesNotContain("Types in scope", File.ReadAllText(promptFile));
+    }
+
+    [Fact]
+    public void Regen_regenerates_a_locked_method_and_replaces_its_body()
+    {
+        using var project = new TempProject();
+        Cli.Run("generate", project.Directory, "--model", project.FakeModel(TempProject.ReverseBody));
+        var before = project.ReadLock();
+        var promptFile = Path.Combine(project.Directory, "prompt.txt");
+
+        var result = Cli.Run("generate", project.Directory, "--regen", "Demo.Text.Reverse(string)", "--model", project.RecordingModel(promptFile, "return input + input;"));
+
+        Assert.Equal(0, result.Code);
+        Assert.True(File.Exists(promptFile));
+        Assert.Contains("generated Demo.Text.Reverse(string)", result.Out);
+        var after = project.ReadLock();
+        Assert.NotEqual(before, after);
+        Assert.Contains("return input + input;", after);
+        Assert.DoesNotContain("Array.Reverse", after);
+    }
+
+    [Fact]
+    public void Regen_keeps_the_previous_body_when_the_new_one_does_not_compile()
+    {
+        using var project = new TempProject();
+        Cli.Run("generate", project.Directory, "--model", project.FakeModel(TempProject.ReverseBody));
+        var before = File.ReadAllBytes(project.LockPath);
+
+        var result = Cli.Run("generate", project.Directory, "--regen", "Demo.Text.Reverse(string)", "--model", project.FakeModel("return missingName;"));
+
+        Assert.Equal(1, result.Code);
+        Assert.Contains("missingName", result.Err);
+        Assert.Equal(before, File.ReadAllBytes(project.LockPath));
+    }
+
+    [Fact]
+    public void Regen_also_generates_methods_that_are_still_pending()
+    {
+        using var project = new TempProject();
+        Cli.Run("generate", project.Directory, "--model", project.FakeModel(TempProject.ReverseBody));
+        project.Write("Twice.cs", """
+            namespace Demo;
+
+            public static partial class Text
+            {
+                [Implock.Implement]
+                public static partial string Twice(string input);
+            }
+            """);
+
+        var result = Cli.Run("generate", project.Directory, "--regen", "Demo.Text.Reverse(string)", "--model", project.FakeModel("return input + input;"));
+
+        Assert.Equal(0, result.Code);
+        Assert.Contains("generated Demo.Text.Reverse(string)", result.Out);
+        Assert.Contains("generated Demo.Text.Twice(string)", result.Out);
+        Assert.DoesNotContain("Array.Reverse", project.ReadLock());
+    }
+
+    [Fact]
+    public void Regen_with_no_id_exits_2()
+    {
+        using var project = new TempProject();
+
+        var result = Cli.Run("generate", project.Directory, "--regen", ",", "--model", "sh /nonexistent-model-command");
+
+        Assert.Equal(2, result.Code);
+        Assert.Contains("implock: --regen needs at least one id", result.Err);
+        Assert.False(File.Exists(project.LockPath));
+    }
+
+    [Fact]
+    public void Regen_with_an_unknown_id_exits_2()
+    {
+        using var project = new TempProject();
+        Cli.Run("generate", project.Directory, "--model", project.FakeModel(TempProject.ReverseBody));
+
+        var result = Cli.Run("generate", project.Directory, "--regen", "Demo.Text.Nope()", "--model", "sh /nonexistent-model-command");
+
+        Assert.Equal(2, result.Code);
+        Assert.Contains("implock: --regen names no [Implement] method: Demo.Text.Nope()", result.Err);
+    }
+
+    [Fact]
     public void Prune_removes_orphan_entries_and_only_with_the_flag()
     {
         using var project = new TempProject();

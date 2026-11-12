@@ -4,7 +4,7 @@ namespace Implock.Cli;
 
 internal static class PromptBuilder
 {
-    public static string Build(MethodSpec spec)
+    public static string Build(MethodSpec spec, string outline)
     {
         var body = new StringBuilder();
         if (spec.Namespace.Length > 0)
@@ -26,6 +26,11 @@ internal static class PromptBuilder
         }
 
         body.Append(spec.Declaration).Append('\n');
+        if (outline.Length > 0)
+        {
+            body.Append("\nTypes in scope (signatures only, no bodies):\n").Append(outline);
+        }
+
         if (spec.Tests.Length > 0)
         {
             body.Append("\nNamed tests the body must satisfy:\n");
