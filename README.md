@@ -74,7 +74,7 @@ The generator never reads a model; it reads `implement.lock` from the project's 
 
 Limits, stated plainly:
 
-- Project loading reads the `.cs` files in one directory; it does not restore NuGet packages, so a spec whose signature uses a type from a package or another project cannot be locked: `generate` refuses it and exits 2. Verification counts compile errors only, not behaviour.
+- Project loading reads the `.cs` files in one directory; it does not restore NuGet packages, so a spec whose signature uses a type from a package or another project cannot be locked: `generate` refuses it and exits 2. Compiler settings (`Nullable`, `ImplicitUsings`, `TreatWarningsAsErrors`, `WarningsAsErrors`, `WarningsNotAsErrors`, `NoWarn`) come from the unconditional property groups of the project file and its `Directory.Build.props` chain, with `$(Property)` references expanded, and are handed to the C# compiler's own option parser, so `nullable`, bare numbers and either separator mean what they mean to `csc`; a value `csc` rejects exits 2; conditions, imports and property functions are not evaluated. Verification counts compile errors only, not behaviour, so a warning the build turns into an error is refused and a plain warning is kept.
 - `report` handles static, non-generic methods whose parameters are string, int, long, double, bool or char. Fuzzing finds only what the input classes and seed reach, so no finding is not a proof.
 - The sample bodies in `samples/Implock.Sample/implement.lock` came from a scripted stand-in command, not a real model.
 
@@ -82,7 +82,7 @@ Limits, stated plainly:
 
 | Claim | Value | Source |
 |---|---|---|
-| Automated tests | 51, 0 failed | `dotnet test` on this commit |
+| Automated tests | 72, 0 failed | `dotnet test` on this commit |
 | Planted looser cases found in the sample pair | 3 input classes of 48 | `implock report` on `samples/report` |
 | Looser classes for an identical pair | 0 | `ReportTests` in `tests/Implock.Cli.Tests` |
 
