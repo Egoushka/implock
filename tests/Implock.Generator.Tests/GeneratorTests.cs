@@ -109,7 +109,7 @@ public class GeneratorTests
 
     [Theory]
     [InlineData("return 1; } public static void Evil() { ")]
-    [InlineData("#pragma warning disable\nreturn 1;")]
+    [InlineData("#" + "pragma warning restore\nreturn 1;")]
     [InlineData("return 1;\n}\n}\nnamespace X { class Y {")]
     public void A_body_that_escapes_the_method_is_refused_with_IMPL004(string body)
     {

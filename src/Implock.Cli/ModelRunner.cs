@@ -54,8 +54,12 @@ internal static class ModelRunner
 
         using (process)
         {
-            var stdout = process.StandardOutput.ReadToEndAsync();
-            var stderr = process.StandardError.ReadToEndAsync();
+            var stdout = new StringBuilder();
+            var stderr = new StringBuilder();
+            process.OutputDataReceived += (_, e) => Append(stdout, e.Data);
+            process.ErrorDataReceived += (_, e) => Append(stderr, e.Data);
+            process.BeginOutputReadLine();
+            process.BeginErrorReadLine();
             try
             {
                 process.StandardInput.Write(prompt);
@@ -75,7 +79,23 @@ internal static class ModelRunner
 
             process.WaitForExit();
             var ok = process.ExitCode == 0;
-            return (ok, stdout.GetAwaiter().GetResult(), stderr.GetAwaiter().GetResult());
+            lock (stdout)
+            {
+                return (ok, stdout.ToString(), stderr.ToString());
+            }
+        }
+    }
+
+    private static void Append(StringBuilder buffer, string? line)
+    {
+        if (line is null)
+        {
+            return;
+        }
+
+        lock (buffer)
+        {
+            buffer.Append(line).Append('\n');
         }
     }
 
