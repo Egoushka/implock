@@ -74,7 +74,7 @@ The generator never reads a model; it reads `implement.lock` from the project's 
 
 Limits, stated plainly:
 
-- Project loading reads the `.cs` files in one directory; it does not restore NuGet packages, so a spec whose signature uses a type from a package or another project cannot be locked: `generate` refuses it and exits 2. Compiler settings (`Nullable`, `ImplicitUsings`, `TreatWarningsAsErrors`, `WarningsAsErrors`, `WarningsNotAsErrors`, `NoWarn`) come from the unconditional property groups of the project file and its `Directory.Build.props` chain, with `$(Property)` references expanded, and are handed to the C# compiler's own option parser, so `nullable`, bare numbers and either separator mean what they mean to `csc`; a value `csc` rejects exits 2; conditions, imports and property functions are not evaluated. Verification counts compile errors only, not behaviour, so a warning the build turns into an error is refused and a plain warning is kept.
+- Project loading reads the `.cs` files in one directory. It references the runtime's assemblies and, when the project has been restored, the compile assemblies its NuGet packages list in `obj/project.assets.json`; it never restores or downloads anything. Project-to-project references, framework references beyond the runtime's own (such as ASP.NET Core) and a custom intermediate output path are not seen, so a spec whose signature uses such a type cannot be locked: `generate` refuses it, exits 2 and suggests `dotnet restore` when the assets file is missing or incomplete. Compiler settings (`Nullable`, `ImplicitUsings`, `TreatWarningsAsErrors`, `WarningsAsErrors`, `WarningsNotAsErrors`, `NoWarn`) come from the unconditional property groups of the project file and its `Directory.Build.props` chain, with `$(Property)` references expanded, and are handed to the C# compiler's own option parser, so `nullable`, bare numbers and either separator mean what they mean to `csc`; a value `csc` rejects exits 2; conditions, imports and property functions are not evaluated. Verification counts compile errors only, not behaviour, so a warning the build turns into an error is refused and a plain warning is kept.
 - `report` handles static, non-generic methods whose parameters are string, int, long, double, bool or char. Fuzzing finds only what the input classes and seed reach, so no finding is not a proof.
 - The sample bodies in `samples/Implock.Sample/implement.lock` came from a scripted stand-in command, not a real model.
 
@@ -82,7 +82,7 @@ Limits, stated plainly:
 
 | Claim | Value | Source |
 |---|---|---|
-| Automated tests | 72, 0 failed | `dotnet test` on this commit |
+| Automated tests | 82, 0 failed | `dotnet test` on this commit |
 | Planted looser cases found in the sample pair | 3 input classes of 48 | `implock report` on `samples/report` |
 | Looser classes for an identical pair | 0 | `ReportTests` in `tests/Implock.Cli.Tests` |
 

@@ -1,5 +1,6 @@
 using System.Collections.Immutable;
 using System.Globalization;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Xml;
 using System.Xml.Linq;
@@ -13,8 +14,10 @@ namespace Implock.Cli;
 /// Builds a compilation from the .cs files of one project directory and runs the generator over it.
 /// Compiler settings come from the unconditional property groups of the project file and of every
 /// Directory.Build.props above it (outermost first, so the project file wins), with $(Property) references
-/// expanded to the value read so far. Limits: no NuGet package resolution and no MSBuild evaluation
-/// (conditions, imports and property functions are not seen); references are the runtime's own assemblies.
+/// expanded to the value read so far. References are the runtime's own assemblies plus, when the project has been
+/// restored, the compile assemblies of its NuGet packages as listed in obj/project.assets.json. Limits: no MSBuild
+/// evaluation (conditions, imports and property functions are not seen), no project-to-project references, no
+/// framework references beyond the runtime's own (such as ASP.NET Core), and no custom intermediate output path.
 /// </summary>
 internal sealed class LoadedProject
 {
@@ -29,15 +32,24 @@ internal sealed class LoadedProject
     private readonly CSharpCompilationOptions _options;
     private readonly ImmutableArray<MetadataReference> _references;
 
-    private LoadedProject(string directory, ImmutableArray<SyntaxTree> trees, CSharpCompilationOptions options, ImmutableArray<MetadataReference> references)
+    private LoadedProject(string directory, ImmutableArray<SyntaxTree> trees, CSharpCompilationOptions options, ImmutableArray<MetadataReference> references, string? restoreHint)
     {
         Directory = directory;
         _trees = trees;
         _options = options;
         _references = references;
+        RestoreHint = restoreHint;
     }
 
     public string Directory { get; }
+
+    /// <summary>Why some package assemblies may be missing from the compilation and what may fix it, or null when every one was found.</summary>
+    public string? RestoreHint { get; }
+
+    /// <summary>The refusal for a spec whose signature names a type this compilation cannot see.</summary>
+    public string UnresolvedTypeMessage(MethodSpec spec) =>
+        "cannot lock " + spec.Id + ": the type '" + spec.UnresolvedType + "' does not resolve here. The CLI sees the .cs files, "
+        + "the runtime libraries and the restored NuGet packages, not other projects or framework references such as ASP.NET Core." + (RestoreHint is null ? string.Empty : " " + RestoreHint);
 
     public string LockPath => Path.Combine(Directory, LockFile.FileName);
 
@@ -101,7 +113,9 @@ internal sealed class LoadedProject
             throw new UsageException("cannot read compiler settings: " + string.Join("; ", errors.Select(e => e.GetMessage(CultureInfo.InvariantCulture))));
         }
 
-        return new LoadedProject(directory, trees.ToImmutableArray(), parsed.CompilationOptions, PlatformReferences());
+        var platform = PlatformReferences();
+        var packages = PackageReferences(directory, properties, platform, out var restoreHint);
+        return new LoadedProject(directory, trees.ToImmutableArray(), parsed.CompilationOptions, platform.AddRange(packages), restoreHint);
     }
 
     public string? ReadLockText()
@@ -206,6 +220,119 @@ internal sealed class LoadedProject
         {
             arguments.Add(option + string.Join(',', ids));
         }
+    }
+
+    private const string RestoreAdvice = "Running `dotnet restore` on the project may resolve it.";
+
+    /// <summary>
+    /// The compile assemblies of the project's packages, read from obj/project.assets.json without any network call.
+    /// A package assembly with the file name of an assembly the tool already references (the runtime's own, and the tool's
+    /// Roslyn and generator copies) is left out, so that copy wins whatever its version; the SDK would keep the higher version.
+    /// </summary>
+    private static List<MetadataReference> PackageReferences(string directory, Dictionary<string, string> properties, ImmutableArray<MetadataReference> platform, out string? restoreHint)
+    {
+        var references = new List<MetadataReference>();
+        var assetsPath = Path.Combine(directory, "obj", "project.assets.json");
+        if (!File.Exists(assetsPath))
+        {
+            restoreHint = "No obj/project.assets.json was found, so NuGet packages are not referenced. " + RestoreAdvice;
+            return references;
+        }
+
+        JsonDocument document;
+        try
+        {
+            document = JsonDocument.Parse(File.ReadAllText(assetsPath));
+        }
+        catch (JsonException e)
+        {
+            throw new UsageException("cannot read " + assetsPath + ": " + e.Message);
+        }
+
+        using (document)
+        {
+            var root = document.RootElement;
+            if (root.ValueKind != JsonValueKind.Object
+                || !root.TryGetProperty("targets", out var targets) || targets.ValueKind != JsonValueKind.Object
+                || !root.TryGetProperty("libraries", out var libraries) || libraries.ValueKind != JsonValueKind.Object
+                || !root.TryGetProperty("packageFolders", out var folderMap) || folderMap.ValueKind != JsonValueKind.Object)
+            {
+                throw new UsageException("cannot read " + assetsPath + ": it has no targets, libraries or packageFolders object");
+            }
+
+            var folders = folderMap.EnumerateObject().Select(f => f.Name).ToList();
+            var platformNames = platform
+                .Select(r => Path.GetFileName(((PortableExecutableReference)r).FilePath))
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var missing = new List<string>();
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var target = ChooseTarget(targets, properties);
+            if (target is { } entries)
+            {
+                foreach (var library in entries.EnumerateObject().Where(IsPackage))
+                {
+                    if (!library.Value.TryGetProperty("compile", out var compile) || compile.ValueKind != JsonValueKind.Object
+                        || !libraries.TryGetProperty(library.Name, out var info) || info.ValueKind != JsonValueKind.Object
+                        || !info.TryGetProperty("path", out var libraryPath) || libraryPath.ValueKind != JsonValueKind.String)
+                    {
+                        continue;
+                    }
+
+                    foreach (var file in compile.EnumerateObject().Select(c => c.Name))
+                    {
+                        var name = Path.GetFileName(file);
+                        if (name == "_._" || platformNames.Contains(name) || !seen.Add(name))
+                        {
+                            continue;
+                        }
+
+                        var found = folders
+                            .Select(folder => Path.Combine(folder, libraryPath.GetString()!, file))
+                            .FirstOrDefault(File.Exists);
+                        if (found is null)
+                        {
+                            missing.Add(name);
+                        }
+                        else
+                        {
+                            references.Add(MetadataReference.CreateFromFile(found));
+                        }
+                    }
+                }
+            }
+
+            restoreHint = missing.Count == 0
+                ? null
+                : "These package assemblies are listed in obj/project.assets.json but not on disk: " + string.Join(", ", missing) + ". " + RestoreAdvice;
+            return references;
+        }
+
+        static bool IsPackage(JsonProperty library) =>
+            library.Value.ValueKind == JsonValueKind.Object
+            && library.Value.TryGetProperty("type", out var type)
+            && type.ValueKind == JsonValueKind.String
+            && type.GetString() == "package";
+    }
+
+    /// <summary>The target for the project's TargetFramework, else the first of TargetFrameworks, else the first one without a runtime id.</summary>
+    private static JsonElement? ChooseTarget(JsonElement targets, Dictionary<string, string> properties)
+    {
+        var framework = properties.GetValueOrDefault("TargetFramework", string.Empty);
+        if (framework.Length == 0)
+        {
+            framework = properties.GetValueOrDefault("TargetFrameworks", string.Empty)
+                .Split(';', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
+                .FirstOrDefault() ?? string.Empty;
+        }
+
+        var candidates = targets.EnumerateObject().Where(t => t.Value.ValueKind == JsonValueKind.Object && !t.Name.Contains('/')).ToList();
+        var chosen = candidates.FirstOrDefault(t => string.Equals(t.Name, framework, StringComparison.OrdinalIgnoreCase));
+        if (chosen.Value.ValueKind == JsonValueKind.Undefined)
+        {
+            chosen = candidates.OrderBy(t => t.Name, StringComparer.Ordinal).FirstOrDefault();
+        }
+
+        return chosen.Value.ValueKind == JsonValueKind.Undefined ? null : chosen.Value;
     }
 
     internal static ImmutableArray<MetadataReference> PlatformReferences()

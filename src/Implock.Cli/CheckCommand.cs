@@ -16,8 +16,7 @@ internal static class CheckCommand
         {
             foreach (var spec in SpecScanner.Scan(run.Compilation).Where(s => s.UnresolvedType is not null))
             {
-                error.WriteLine("implock: cannot lock " + spec.Id + ": the type '" + spec.UnresolvedType
-                    + "' does not resolve here. The CLI sees only the .cs files and the runtime libraries, not NuGet packages or other projects.");
+                error.WriteLine("implock: " + project.UnresolvedTypeMessage(spec));
             }
 
             return Program.Findings;
