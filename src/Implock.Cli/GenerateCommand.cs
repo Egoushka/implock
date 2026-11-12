@@ -63,8 +63,7 @@ internal static class GenerateCommand
             {
                 if (spec.UnresolvedType is not null)
                 {
-                    error.WriteLine("implock: cannot lock " + spec.Id + ": the type '" + spec.UnresolvedType
-                        + "' does not resolve here. The CLI sees only the .cs files and the runtime libraries, not NuGet packages or other projects.");
+                    error.WriteLine("implock: " + project.UnresolvedTypeMessage(spec));
                     environmentFailure = true;
                     continue;
                 }
@@ -148,7 +147,15 @@ internal static class GenerateCommand
             .Where(d => d.Severity == DiagnosticSeverity.Error && d.Location.SourceTree == tree)
             .Select(d => d.ToString())
             .ToList();
-        return errors.Count == 0 ? null : "the body does not compile: " + string.Join("; ", errors);
+        if (errors.Count == 0)
+        {
+            return null;
+        }
+
+        // CS0246, CS0234 and CS0012 are the errors a missing reference gives: say why one may be missing.
+        var missingReference = project.RestoreHint is not null && run.Compilation.GetDiagnostics()
+            .Any(d => d.Severity == DiagnosticSeverity.Error && d.Location.SourceTree == tree && d.Id is "CS0246" or "CS0234" or "CS0012");
+        return "the body does not compile: " + string.Join("; ", errors) + (missingReference ? " " + project.RestoreHint : string.Empty);
     }
 
     private static string CheckCommandMessages(GeneratorRun run, MethodSpec spec) =>
