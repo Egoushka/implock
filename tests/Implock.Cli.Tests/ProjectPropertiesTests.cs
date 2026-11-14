@@ -248,9 +248,10 @@ public class ProjectPropertiesTests
     [InlineData("<TargetFramework>net48</TargetFramework>", 1)]
     [InlineData("<TargetFramework>netstandard2.0</TargetFramework>", 1)]
     [InlineData("<TargetFramework>netcoreapp3.1</TargetFramework>", 0)]
+    [InlineData("<TargetFramework></TargetFramework>", 1)]
     public void A_level_four_warning_follows_the_target_level(string properties, int code)
     {
-        // .NET Framework and .NET Standard build at level 4; netcoreapp3.1 builds at level 3.
+        // .NET Framework and .NET Standard build at level 4; netcoreapp3.1 builds at level 3; no target framework keeps the compiler default of 4.
         using var project = new TempProject();
         project.Write("Text.cs", WaveSource);
         project.Write("Demo.csproj", Csproj(properties + "<TreatWarningsAsErrors>true</TreatWarningsAsErrors>"));
