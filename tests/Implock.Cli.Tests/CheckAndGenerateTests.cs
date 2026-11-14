@@ -286,6 +286,97 @@ public class CheckAndGenerateTests
     }
 
     [Fact]
+    public void The_prompt_lists_the_containing_type_first_then_signature_types_then_deeper_types_in_member_order()
+    {
+        using var project = new TempProject();
+        project.Write("Text.cs", """
+            namespace Demo;
+
+            public sealed class Zeta { public int Z { get; set; } }
+
+            public sealed class Alpha { public int A { get; set; } }
+
+            public sealed class Order { public int Id { get; set; } }
+
+            public static partial class Text
+            {
+                private static Zeta zeta = new();
+                private static Alpha alpha = new();
+
+                [Implock.Implement]
+                public static partial int IdOf(Order order);
+            }
+            """);
+        var promptFile = Path.Combine(project.Directory, "prompt.txt");
+
+        Cli.Run("generate", project.Directory, "--model", project.RecordingModel(promptFile, "return order.Id;"));
+
+        var prompt = File.ReadAllText(promptFile);
+        var outline = prompt[prompt.IndexOf("Types in scope", StringComparison.Ordinal)..];
+        Assert.Contains(
+            "public static class Text\n  private static Zeta zeta\n  private static Alpha alpha\npublic sealed class Order\n  public int Id { get; set; }\npublic sealed class Zeta\n  public int Z { get; set; }\npublic sealed class Alpha\n  public int A { get; set; }\n",
+            outline,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void The_prompt_outlines_at_most_the_bound_of_deeper_types_and_counts_the_rest()
+    {
+        const int bound = TypeContext.MaxDeeperTypes;
+        var types = Enumerable.Range(1, bound + 2).Select(i => $"public sealed class T{i:00} {{ public int V {{ get; set; }} }}");
+        var fields = Enumerable.Range(1, bound + 2).Select(i => $"    private static T{i:00} t{i:00} = new();");
+        using var project = new TempProject();
+        project.Write("Text.cs", "namespace Demo;\n\n" + string.Join("\n", types) + "\n\npublic static partial class Text\n{\n" + string.Join("\n", fields)
+            + "\n\n    [Implock.Implement]\n    public static partial int One();\n}\n");
+        var promptFile = Path.Combine(project.Directory, "prompt.txt");
+
+        Cli.Run("generate", project.Directory, "--model", project.RecordingModel(promptFile, "return 1;"));
+
+        var prompt = File.ReadAllText(promptFile);
+        Assert.Contains($"public sealed class T{bound:00}\n", prompt, StringComparison.Ordinal);
+        Assert.DoesNotContain($"public sealed class T{bound + 1:00}\n", prompt, StringComparison.Ordinal);
+        Assert.Contains("(2 more types not shown)\n", prompt, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void The_prompt_expands_nested_types_of_the_containing_type_and_of_outlined_types()
+    {
+        using var project = new TempProject();
+        project.Write("Text.cs", """
+            namespace Demo;
+
+            public sealed class Order
+            {
+                public sealed class Line
+                {
+                    public int Qty { get; set; }
+
+                    private int hiddenQty;
+                }
+            }
+
+            public static partial class Text
+            {
+                private sealed class Cache
+                {
+                    public int Hits { get; set; }
+                }
+
+                [Implock.Implement]
+                public static partial int Count(Order order);
+            }
+            """);
+        var promptFile = Path.Combine(project.Directory, "prompt.txt");
+
+        Cli.Run("generate", project.Directory, "--model", project.RecordingModel(promptFile, "return 1;"));
+
+        var prompt = File.ReadAllText(promptFile);
+        Assert.Contains("  private sealed class Text.Cache\n    public int Hits { get; set; }\n", prompt, StringComparison.Ordinal);
+        Assert.Contains("  public sealed class Order.Line\n    public int Qty { get; set; }\n", prompt, StringComparison.Ordinal);
+        Assert.DoesNotContain("hiddenQty", prompt, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void The_prompt_omits_the_type_block_when_nothing_is_in_scope()
     {
         using var project = new TempProject();

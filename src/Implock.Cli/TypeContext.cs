@@ -31,6 +31,9 @@ internal static class TypeContext
             | SymbolDisplayMiscellaneousOptions.EscapeKeywordIdentifiers
             | SymbolDisplayMiscellaneousOptions.IncludeNullableReferenceTypeModifier);
 
+    /// <summary>The most types outlined one level deeper; the rest are named in a closing line, so a large type cannot grow the prompt without bound.</summary>
+    internal const int MaxDeeperTypes = 12;
+
     /// <summary>The outline for <paramref name="spec"/>, or an empty string when there is nothing to show.</summary>
     public static string Build(Compilation compilation, MethodSpec spec)
     {
@@ -53,7 +56,7 @@ internal static class TypeContext
             .ToList();
         if (siblings.Count > 0)
         {
-            AppendType(outline, containing, siblings);
+            AppendType(outline, containing, siblings, string.Empty, publicAndInternalOnly: false);
         }
 
         var seen = new HashSet<INamedTypeSymbol>(SymbolEqualityComparer.Default) { containing.OriginalDefinition };
@@ -76,9 +79,19 @@ internal static class TypeContext
             }
         }
 
-        foreach (var (type, members) in blocks.Concat(deeper.Select(t => (Type: t, Members: Members(t, publicAndInternalOnly: true)))))
+        foreach (var (type, members) in blocks)
         {
-            AppendType(outline, type, members);
+            AppendType(outline, type, members, string.Empty, publicAndInternalOnly: true);
+        }
+
+        foreach (var type in deeper.Take(MaxDeeperTypes))
+        {
+            AppendType(outline, type, Members(type, publicAndInternalOnly: true), string.Empty, publicAndInternalOnly: true);
+        }
+
+        if (deeper.Count > MaxDeeperTypes)
+        {
+            outline.Append('(').Append(deeper.Count - MaxDeeperTypes).Append(" more types not shown)\n");
         }
 
         return outline.ToString();
@@ -121,14 +134,14 @@ internal static class TypeContext
         }
     }
 
-    private static void AppendType(StringBuilder outline, INamedTypeSymbol type, List<ISymbol> members)
+    private static void AppendType(StringBuilder outline, INamedTypeSymbol type, List<ISymbol> members, string indent, bool publicAndInternalOnly)
     {
-        outline.Append(Header(type)).Append('\n');
+        outline.Append(indent).Append(Header(type)).Append('\n');
         if (type.TypeKind == TypeKind.Enum)
         {
             foreach (var member in members.OfType<IFieldSymbol>())
             {
-                outline.Append("  ").Append(member.Name).Append('\n');
+                outline.Append(indent).Append("  ").Append(member.Name).Append('\n');
             }
 
             return;
@@ -136,10 +149,14 @@ internal static class TypeContext
 
         foreach (var member in members)
         {
-            var line = member is INamedTypeSymbol nested
-                ? Header(nested)
-                : member.ToDisplayString(MemberFormat);
-            outline.Append("  ").Append(line).Append('\n');
+            if (member is INamedTypeSymbol nested)
+            {
+                AppendType(outline, nested, Members(nested, publicAndInternalOnly), indent + "  ", publicAndInternalOnly);
+            }
+            else
+            {
+                outline.Append(indent).Append("  ").Append(member.ToDisplayString(MemberFormat)).Append('\n');
+            }
         }
     }
 
