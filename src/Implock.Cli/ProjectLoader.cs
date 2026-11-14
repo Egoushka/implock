@@ -309,7 +309,7 @@ internal sealed class LoadedProject
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
             var missing = new List<string>();
             var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            var target = ChooseTarget(targets, properties);
+            var target = ChooseTarget(targets, properties, out var targetNote);
             if (target is { } entries)
             {
                 foreach (var library in entries.EnumerateObject().Where(IsPackage))
@@ -344,9 +344,18 @@ internal sealed class LoadedProject
                 }
             }
 
-            restoreHint = missing.Count == 0
-                ? null
-                : "These package assemblies are listed in obj/project.assets.json but not on disk: " + string.Join(", ", missing) + ". " + RestoreAdvice;
+            var notes = new List<string>();
+            if (targetNote is not null)
+            {
+                notes.Add(targetNote);
+            }
+
+            if (missing.Count > 0)
+            {
+                notes.Add("These package assemblies are listed in obj/project.assets.json but not on disk: " + string.Join(", ", missing) + ". " + RestoreAdvice);
+            }
+
+            restoreHint = notes.Count == 0 ? null : string.Join(" ", notes);
             return references;
         }
 
@@ -357,20 +366,42 @@ internal sealed class LoadedProject
             && type.GetString() == "package";
     }
 
-    /// <summary>The target for the project's TargetFramework, else the first of TargetFrameworks, else the first one without a runtime id.</summary>
-    private static JsonElement? ChooseTarget(JsonElement targets, Dictionary<string, string> properties)
+    /// <summary>
+    /// The target for the project's TargetFramework. The assets file keys a platform framework with its version
+    /// (net8.0-windows7.0 for net8.0-windows), so a key that extends the framework is accepted. Failing both,
+    /// the first plain key is used and <paramref name="note"/> says so.
+    /// </summary>
+    private static JsonElement? ChooseTarget(JsonElement targets, Dictionary<string, string> properties, out string? note)
     {
+        note = null;
         var framework = TargetFramework(properties);
 
-        var candidates = targets.EnumerateObject().Where(t => t.Value.ValueKind == JsonValueKind.Object && !t.Name.Contains('/')).ToList();
+        var candidates = targets.EnumerateObject()
+            .Where(t => t.Value.ValueKind == JsonValueKind.Object && !t.Name.Contains('/'))
+            .OrderBy(t => t.Name, StringComparer.Ordinal)
+            .ToList();
         var chosen = candidates.FirstOrDefault(t => string.Equals(t.Name, framework, StringComparison.OrdinalIgnoreCase));
+        if (chosen.Value.ValueKind == JsonValueKind.Undefined && framework.Length > 0)
+        {
+            chosen = candidates.FirstOrDefault(t => IsPlatformVersionOf(t.Name, framework));
+        }
+
         if (chosen.Value.ValueKind == JsonValueKind.Undefined)
         {
-            chosen = candidates.OrderBy(t => t.Name, StringComparer.Ordinal).FirstOrDefault();
+            chosen = candidates.FirstOrDefault();
+            if (chosen.Value.ValueKind != JsonValueKind.Undefined)
+            {
+                note = "No target in obj/project.assets.json matches the target framework '" + framework + "', so '" + chosen.Name + "' was used.";
+            }
         }
 
         return chosen.Value.ValueKind == JsonValueKind.Undefined ? null : chosen.Value;
     }
+
+    private static bool IsPlatformVersionOf(string key, string framework) =>
+        key.Length > framework.Length
+        && key.StartsWith(framework, StringComparison.OrdinalIgnoreCase)
+        && char.IsDigit(key[framework.Length]);
 
     internal static ImmutableArray<MetadataReference> PlatformReferences()
     {

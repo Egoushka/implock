@@ -212,6 +212,95 @@ public class PackageReferenceTests
         Assert.False(File.Exists(project.LockPath));
     }
 
+    [Fact]
+    public void A_platform_framework_resolves_to_its_versioned_target()
+    {
+        // net8.0-windows is keyed net8.0-windows7.0 in the assets file; net10.0 sorts first and holds no assembly.
+        using var project = new TempProject();
+        project.Write("Text.cs", UsingSource);
+        project.Write("Demo.csproj", Csproj("net8.0-windows"));
+        var folder = AddPackage(project, "Fake.Lib", "lib/net8.0/Fake.Lib.dll", PackageSource);
+        WriteAssets(
+            project,
+            folder,
+            ("net10.0", Package("Fake.Lib", "lib/net10.0/_._")),
+            ("net8.0-windows7.0", Package("Fake.Lib", "lib/net8.0/Fake.Lib.dll")));
+
+        var result = Cli.Run("generate", project.Directory, "--model", project.FakeModel(ShoutBody));
+
+        Assert.Equal(0, result.Code);
+    }
+
+    [Fact]
+    public void A_target_that_matches_no_framework_is_named_in_the_refusal()
+    {
+        using var project = new TempProject();
+        project.Write("Text.cs", UsingSource);
+        project.Write("Demo.csproj", Csproj("net9.0"));
+        var folder = AddPackage(project, "Fake.Lib", "lib/net10.0/Fake.Lib.dll", PackageSource);
+        WriteAssets(project, folder, ("net10.0", Package("Fake.Lib", "lib/net10.0/Fake.Lib.dll")));
+
+        var result = Cli.Run("generate", project.Directory, "--model", project.FakeModel("return new Nowhere().ToString();"));
+
+        Assert.Equal(1, result.Code);
+        Assert.Contains("'net9.0'", result.Err, StringComparison.Ordinal);
+        Assert.Contains("'net10.0' was used", result.Err, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void A_runtime_specific_target_is_not_chosen()
+    {
+        using var project = new TempProject();
+        project.Write("Text.cs", UsingSource);
+        project.Write("Demo.csproj", Csproj("net10.0"));
+        var folder = AddPackage(project, "Fake.Lib", "lib/net10.0/Fake.Lib.dll", PackageSource);
+        WriteAssets(project, folder, ("net10.0/win-x64", Package("Fake.Lib", "lib/net10.0/Fake.Lib.dll")));
+
+        var result = Cli.Run("generate", project.Directory, "--model", project.FakeModel(ShoutBody));
+
+        Assert.Equal(1, result.Code);
+        Assert.Contains("CS0246", result.Err, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void The_first_package_wins_when_two_ship_the_same_file_name()
+    {
+        // The second copy holds Extra; reading it would make the body below compile.
+        using var project = new TempProject();
+        project.Write("Text.cs", UsingSource);
+        project.Write("Demo.csproj", Csproj("net10.0"));
+        const string dll = "lib/net10.0/Fake.Lib.dll";
+        var folder = AddPackage(project, "First.Pkg", dll, PackageSource);
+        AddPackage(project, "Second.Pkg", dll, "namespace Fake.Lib { public sealed class Extra { } }");
+        var entries = new Dictionary<string, object>(Package("First.Pkg", dll));
+        foreach (var pair in Package("Second.Pkg", dll))
+        {
+            entries[pair.Key] = pair.Value;
+        }
+
+        WriteAssets(project, folder, ("net10.0", entries));
+
+        var result = Cli.Run("generate", project.Directory, "--model", project.FakeModel("return new Extra().ToString();"));
+
+        Assert.Equal(1, result.Code);
+        Assert.Contains("CS0246", result.Err, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void An_assets_file_without_the_expected_objects_exits_2()
+    {
+        using var project = new TempProject();
+        project.Write("Text.cs", UsingSource);
+        project.Write("Demo.csproj", Csproj("net10.0"));
+        Directory.CreateDirectory(Path.Combine(project.Directory, "obj"));
+        project.Write("obj/project.assets.json", "{ \"targets\": {} }");
+
+        var result = Cli.Run("generate", project.Directory, "--model", project.FakeModel(ShoutBody));
+
+        Assert.Equal(2, result.Code);
+        Assert.Contains("no targets, libraries or packageFolders", result.Err, StringComparison.Ordinal);
+    }
+
     private static string Csproj(string framework) =>
         "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>" + framework + "</TargetFramework></PropertyGroup></Project>";
 
